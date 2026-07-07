@@ -382,9 +382,14 @@ function lessonZoomAllowed(){ return sourceType==='file' || sourceType==='screen
 function maxLessonZoom(){ return 1000; }
 function bgCur(){ return S.mode==='overlay' ? S.bgOver : S.bg; }   // у каждого режима свой фон
 function clampPan(z){
+  // предел движения — от реальных размеров картинки: вертикальное видео
+  // свободно ездит по ширине, широкое — по высоте, плюс запас 30% всегда
   const box=lessonBox.getBoundingClientRect();
-  const limX=box.width*Math.abs(z-1)/2;
-  const limY=box.height*Math.max(Math.abs(z-1)/2, 0.3);  // выше-ниже можно двигать всегда
+  const vw=lessonVideo.videoWidth||16, vh=lessonVideo.videoHeight||9;
+  const s=Math.min(box.width/vw, box.height/vh)*z;
+  const contW=vw*s, contH=vh*s;
+  const limX=Math.max(Math.abs(box.width-contW)/2, box.width*0.3);
+  const limY=Math.max(Math.abs(box.height-contH)/2, box.height*0.3);
   panX=Math.max(-limX,Math.min(limX,panX));
   panY=Math.max(-limY,Math.min(limY,panY));
 }
@@ -445,9 +450,8 @@ function applyAll(){
     camPane.style.top='0'; camPane.style.bottom='0';
     camPane.style.overflow='hidden';
     const paneW=A.width*(100-S.split)/100, paneH=A.height;
-    const fit=Math.min(paneH, paneW/aspect);
-    lastSideFit=fit;
-    const h=Math.max(40, fit*S.size/100);
+    // размер — просто % от высоты экрана: при повороте ничего не «плывёт»
+    const h=Math.max(40, paneH*S.size/100);
     const w=h*aspect;
     camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
     let left=(paneW-w)/2 + paneW*S.sideX/100;
@@ -1047,11 +1051,10 @@ function doAutoFit(){
     }
     const aspect=camCanvas.width/Math.max(1,camCanvas.height);
     if(S.mode==='side'){
-      const paneW=A.width*(100-S.split)/100, paneH=A.height;
-      const fitH=Math.min(paneH, paneW/aspect);
-      let newSize=Math.round(trainerPx/(me.frac*fitH)*100);
-      newSize=Math.max(20,Math.min(250,newSize));
-      const h=fitH*newSize/100;
+      const paneH=A.height;
+      let newSize=Math.round(trainerPx/(me.frac*paneH)*100);
+      newSize=Math.max(20,Math.min(400,newSize));
+      const h=paneH*newSize/100;
       const topNeeded=(feetT-A.top)-me.maxY*h;
       S.size=newSize; S.sideX=0;
       S.sideY=Math.max(-45,Math.min(45, Math.round((topNeeded-(paneH-h)/2)/paneH*100)));
@@ -1082,14 +1085,6 @@ window.addEventListener('resize', ()=>{
   if($('stage').classList.contains('hidden')) return;
   const A=arena.getBoundingClientRect();
   if(lastArena.w&&lastArena.h&&A.width&&A.height){
-    // сохраняем видимый «рост» людей при повороте экрана
-    if(S.mode==='side'&&lastSideFit>0){
-      const paneW=A.width*(100-S.split)/100, paneH=A.height;
-      const aspect=camCanvas.width/Math.max(1,camCanvas.height);
-      const newFit=Math.min(paneH, paneW/aspect);
-      if(newFit>0) S.size=Math.round(Math.max(20,Math.min(400,
-        S.size*(lastSideFit/lastArena.h)*(A.height/newFit))));
-    }
     if(camPos.x!==null){                       // позиция силуэта — пропорционально
       camPos.x*=A.width/lastArena.w;
       camPos.y*=A.height/lastArena.h;
