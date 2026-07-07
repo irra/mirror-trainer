@@ -51,9 +51,13 @@
   #lessonVideo{object-fit:contain; transform-origin:center center;}
   #ytBox iframe{width:100%; height:100%;}
   #lessonShield{position:absolute; inset:0; z-index:5; cursor:grab;}
-  #divider{position:absolute; top:0; bottom:0; width:28px; margin-left:-14px; z-index:30;
-    cursor:col-resize; touch-action:none; display:flex; align-items:center; justify-content:center;}
-  #divider::after{content:''; width:5px; height:110px; border-radius:3px; background:rgba(255,255,255,.55);}
+  #divider{position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; z-index:30;
+    background:rgba(255,255,255,.22); pointer-events:none;}
+  #divHandle{position:absolute; top:6px; left:50%; transform:translateX(-50%);
+    width:56px; height:30px; border-radius:15px; background:rgba(255,255,255,.65);
+    pointer-events:auto; touch-action:none; cursor:col-resize;}
+  #camPane{position:absolute; z-index:20; pointer-events:none;}
+  #camCanvas{pointer-events:auto;}
   #camCanvas{position:absolute; touch-action:none; cursor:grab;}
   #countdown{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     font-size:180px; font-weight:700; color:var(--accent); background:rgba(0,0,0,.45); z-index:60;}
@@ -137,8 +141,8 @@
       <div id="ytBox" class="hidden"><div id="ytPlayer"></div></div>
       <div id="lessonShield" class="hidden"></div>
     </div>
-    <div id="divider" class="hidden"></div>
-    <canvas id="camCanvas"></canvas>
+    <div id="divider" class="hidden"><div id="divHandle"></div></div>
+    <div id="camPane"><canvas id="camCanvas"></canvas></div>
     <div id="countdown" class="hidden"></div>
     <div id="toast" class="hidden"></div>
   </div>
@@ -166,14 +170,15 @@
     <div class="sliders">
       <div><label>Фон за мной: <b id="vBg"></b>%</label><input type="range" id="sBg" min="0" max="100" step="1"></div>
       <div><label>Прозрачность верхнего слоя: <b id="vOp"></b>%</label><input type="range" id="sOp" min="10" max="100" step="1"></div>
-      <div><label>Мой размер: <b id="vSize"></b>%</label><input type="range" id="sSize" min="20" max="250" step="1"></div>
+      <div><label>Мой размер: <b id="vSize"></b>%</label><input type="range" id="sSize" min="20" max="400" step="1"></div>
       <div><label>Яркость моего кадра: <b id="vBright"></b></label><input type="range" id="sBright" min="-50" max="50" step="1"></div>
-      <div><label>Масштаб урока: <b id="vZoom"></b>%</label><input type="range" id="sZoom" min="30" max="500" step="5"></div>
+      <div><label>Масштаб урока: <b id="vZoom"></b>%</label><input type="range" id="sZoom" min="30" max="1000" step="5"></div>
       <div><label>Разделение экрана: <b id="vSplit"></b>%</label><input type="range" id="sSplit" min="20" max="80" step="1"></div>
     </div>
 
     <div class="row">
       <button id="btnFit">&#10024; Подогнать под тренера</button>
+      <button id="btnReset" title="Все масштабы и позиции к 100%">Сброс масштаба</button>
       <button id="btnMirror">Зеркало: вкл</button>
       <button id="btnLMirror">Урок зеркально: выкл</button>
       <button id="btnCutout">Вырезание фона: вкл</button>
@@ -195,7 +200,7 @@ const $ = id => document.getElementById(id);
 const DEFAULTS = {
   mode:'side', order:'meTop', topOpacity:80, bg:25, blur:false, cutout:true,
   vignette:true, mirror:true, bright:0, size:100, zoom:100, eco:false, speed:1,
-  split:50, lessonMirror:false, sideY:0
+  split:50, lessonMirror:false, sideY:0, sideX:0, bgOver:8
 };
 let S = {...DEFAULTS};
 try { Object.assign(S, JSON.parse(localStorage.getItem('mt_settings_v2')||'{}')); } catch(e){}
@@ -203,6 +208,7 @@ function save(){ try{ localStorage.setItem('mt_settings_v2', JSON.stringify(S));
 
 /* ---------------- элементы ---------------- */
 const camVideo=$('camVideo'), camCanvas=$('camCanvas'), camCtx=camCanvas.getContext('2d');
+const camPane=$('camPane');
 const lessonVideo=$('lessonVideo'), lessonBox=$('lessonBox'), arena=$('arena');
 let camStream=null, sourceType=null, ytPlayer=null, fileURL=null;
 let camPos={x:null,y:null};           // позиция силуэта в px внутри арены
@@ -362,7 +368,8 @@ function fsHint(){
 
 /* ================= РАСКЛАДКА ================= */
 function lessonZoomAllowed(){ return sourceType==='file' || sourceType==='screen'; }
-function maxLessonZoom(){ return 500; }
+function maxLessonZoom(){ return 1000; }
+function bgCur(){ return S.mode==='overlay' ? S.bgOver : S.bg; }   // у каждого режима свой фон
 function clampPan(z){
   const box=lessonBox.getBoundingClientRect();
   const limX=box.width*Math.abs(z-1)/2;
@@ -395,11 +402,11 @@ function applyAll(){
   lessonBox.style.right = side ? (100-S.split)+'%' : '0';
   // прозрачность и порядок слоёв
   if(!side && S.order==='lessonTop'){
-    lessonBox.style.zIndex=20; camCanvas.style.zIndex=10;
+    lessonBox.style.zIndex=20; camPane.style.zIndex=10;
     lessonBox.style.opacity=S.topOpacity/100; camCanvas.style.opacity=1;
     lessonBox.style.pointerEvents='none';
   }else{
-    lessonBox.style.zIndex=10; camCanvas.style.zIndex=20;
+    lessonBox.style.zIndex=10; camPane.style.zIndex=20;
     lessonBox.style.opacity=1;
     camCanvas.style.opacity = side ? 1 : S.topOpacity/100;
     lessonBox.style.pointerEvents='auto';
@@ -415,16 +422,27 @@ function applyAll(){
   const A=arena.getBoundingClientRect();
   const aspect=camCanvas.width/Math.max(1,camCanvas.height);
   if(side){
-    // режим «рядом»: камера занимает свою половину, по центру; выше-ниже — перетаскиванием
-    const paneX=A.width*S.split/100, paneW=A.width-paneX, paneH=A.height;
-    const h=Math.max(40, Math.min(paneH, paneW/aspect)*S.size/100);
+    // режим «рядом»: камера в своей половине-«окошке», лишнее обрезается краями
+    camPane.style.left=S.split+'%'; camPane.style.right='0';
+    camPane.style.top='0'; camPane.style.bottom='0';
+    camPane.style.overflow='hidden';
+    const paneW=A.width*(100-S.split)/100, paneH=A.height;
+    const fit=Math.min(paneH, paneW/aspect);
+    lastSideFit=fit;
+    const h=Math.max(40, fit*S.size/100);
     const w=h*aspect;
     camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
-    camCanvas.style.left=(paneX+(paneW-w)/2)+'px';
+    let left=(paneW-w)/2 + paneW*S.sideX/100;
+    if(w>paneW) left=Math.max(paneW-w, Math.min(0, left));   // при увеличении — двигаем кадр внутри окошка
+    else left=(paneW-w)/2;
     let top=(paneH-h)/2 + paneH*S.sideY/100;
-    top=Math.max(-h*0.6, Math.min(A.height-h*0.4, top));
+    top=Math.max(-h*0.6, Math.min(paneH-h*0.4, top));
+    camCanvas.style.left=left+'px';
     camCanvas.style.top=top+'px';
   }else{
+    camPane.style.left='0'; camPane.style.right='0';
+    camPane.style.top='0'; camPane.style.bottom='0';
+    camPane.style.overflow='visible';
     const h=A.height*S.size/100;
     camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
     if(camPos.x===null){
@@ -434,6 +452,13 @@ function applyAll(){
     }
     clampCam();                                 // силуэт не может уйти за экран
     camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
+  }
+  // запоминаем видимую высоту урока — чтобы при повороте экрана сохранить «рост» тренера
+  {
+    const vw=lessonVideo.videoWidth||16, vh=lessonVideo.videoHeight||9;
+    const boxW=A.width*(side?S.split/100:1), boxH=A.height;
+    const contain=Math.min(boxW/vw, boxH/vh)*vh;
+    if(contain>0&&A.height>0) lastLessonRel=contain*Math.min(S.zoom,maxLessonZoom())/100/A.height;
   }
   // подписи кнопок
   $('btnSide').classList.toggle('active', side);
@@ -448,7 +473,7 @@ function applyAll(){
   $('btnEco').textContent='Экономия: '+(S.eco?'вкл':'выкл');
   $('btnBlur').disabled=!S.cutout;
   // ползунки
-  $('sBg').value=S.bg; $('vBg').textContent=S.bg;
+  $('sBg').value=bgCur(); $('vBg').textContent=bgCur();
   $('sOp').value=S.topOpacity; $('vOp').textContent=S.topOpacity;
   $('sSize').value=S.size; $('vSize').textContent=S.size;
   $('sBright').value=S.bright; $('vBright').textContent=(S.bright>0?'+':'')+S.bright;
@@ -460,7 +485,7 @@ function applyAll(){
 }
 
 /* ползунки */
-$('sBg').oninput = e=>{S.bg=+e.target.value; applyAll();};
+$('sBg').oninput = e=>{ if(S.mode==='overlay') S.bgOver=+e.target.value; else S.bg=+e.target.value; applyAll(); };
 $('sOp').oninput = e=>{S.topOpacity=+e.target.value; applyAll();};
 $('sSize').oninput = e=>{S.size=+e.target.value; applyAll();};
 $('sBright').oninput = e=>{S.bright=+e.target.value; applyAll();};
@@ -485,6 +510,12 @@ $('btnOverlay').onclick= ()=>{
   S.mode='overlay'; camPos={x:null,y:null}; applyAll();
 };
 $('btnLMirror').onclick= ()=>{S.lessonMirror=!S.lessonMirror; applyAll();};
+$('btnReset').onclick  = ()=>{
+  S.zoom=100; panX=0; panY=0; S.size=100; S.sideX=0; S.sideY=0;
+  camPos={x:null,y:null};
+  applyAll();
+  toast('Все масштабы и позиции сброшены к 100%', 3000);
+};
 $('btnOrder').onclick  = ()=>{S.order=S.order==='meTop'?'lessonTop':'meTop'; applyAll();};
 $('btnMirror').onclick = ()=>{S.mirror=!S.mirror; applyAll();};
 $('btnCutout').onclick = ()=>{S.cutout=!S.cutout; applyAll();};
@@ -497,16 +528,19 @@ let pinching=false;
 (function(){
   let drag=null;
   camCanvas.addEventListener('pointerdown', e=>{
-    drag={sx:e.clientX, sy:e.clientY, ox:camPos.x, oy:camPos.y, sideY0:S.sideY, side:S.mode==='side'};
+    drag={sx:e.clientX, sy:e.clientY, ox:camPos.x, oy:camPos.y,
+          sideY0:S.sideY, sideX0:S.sideX, side:S.mode==='side'};
     camCanvas.setPointerCapture(e.pointerId);
     camCanvas.style.cursor='grabbing';
   });
   camCanvas.addEventListener('pointermove', e=>{
     if(!drag) return;
     if(pinching){ drag=null; return; }
-    if(drag.side){                              // в режиме «рядом» — только выше-ниже
+    if(drag.side){                              // в режиме «рядом» — двигаем кадр внутри своего окошка
       const A=arena.getBoundingClientRect();
+      const paneW=A.width*(100-S.split)/100;
       S.sideY=Math.max(-60,Math.min(60, drag.sideY0+(e.clientY-drag.sy)/A.height*100));
+      S.sideX=Math.max(-80,Math.min(80, drag.sideX0+(e.clientX-drag.sx)/Math.max(1,paneW)*100));
       applyAll();
       return;
     }
@@ -529,17 +563,17 @@ let pinching=false;
     applyLessonTransform();
   });
   lessonBox.addEventListener('pointerup', ()=>{pan=null;});
-  // перегородка между экранами: тянем пальцем или мышью
-  const dv=$('divider');
+  // перегородка между экранами: тянем ТОЛЬКО за ручку сверху
+  const dh=$('divHandle');
   let dvDrag=false;
-  dv.addEventListener('pointerdown', e=>{ dvDrag=true; dv.setPointerCapture(e.pointerId); e.stopPropagation(); });
-  dv.addEventListener('pointermove', e=>{
+  dh.addEventListener('pointerdown', e=>{ dvDrag=true; dh.setPointerCapture(e.pointerId); });
+  dh.addEventListener('pointermove', e=>{
     if(!dvDrag) return;
     const A=arena.getBoundingClientRect();
     S.split=Math.round(Math.max(20,Math.min(80,(e.clientX-A.left)/A.width*100)));
     applyAll();
   });
-  dv.addEventListener('pointerup', ()=>{dvDrag=false; save();});
+  dh.addEventListener('pointerup', ()=>{dvDrag=false; save();});
 })();
 
 /* щипок двумя пальцами: на силуэте — мой размер, на уроке — масштаб урока;
@@ -564,7 +598,7 @@ let pinching=false;
     if(pinch && pts.size===2){
       const [a,b]=[...pts.values()];
       const k=Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0;
-      if(pinch.cam) S.size=Math.round(Math.max(20,Math.min(250,pinch.size0*k)));
+      if(pinch.cam) S.size=Math.round(Math.max(20,Math.min(400,pinch.size0*k)));
       else S.zoom=Math.round(Math.max(30,Math.min(maxLessonZoom(),pinch.zoom0*k)));
       applyAll();
     }
@@ -597,6 +631,15 @@ let pinching=false;
 /* Safari: запрет масштабирования всей страницы щипком во время тренировки */
 document.addEventListener('gesturestart', e=>{ if(!$('stage').classList.contains('hidden')) e.preventDefault(); });
 document.addEventListener('gesturechange', e=>{ if(!$('stage').classList.contains('hidden')) e.preventDefault(); });
+/* iPhone: запрет системного увеличения страницы двойным тапом по сцене */
+(function(){
+  let lastTE=0;
+  arena.addEventListener('touchend', e=>{
+    const now=Date.now();
+    if(now-lastTE<350) e.preventDefault();
+    lastTE=now;
+  }, {passive:false});
+})();
 
 /* ================= УПРАВЛЕНИЕ УРОКОМ ================= */
 const lesson={
@@ -746,15 +789,38 @@ function sizeCanvasTo(w,h){
 function brightFilter(){ return `brightness(${(100+S.bright)/100})`; }
 const FILTER_OK=(()=>{ try{ const t=document.createElement('canvas').getContext('2d');
   t.filter='blur(1px)'; return t.filter!=='none'; }catch(e){ return false; } })();
-/* яркость для браузеров без поддержки canvas-фильтров (старый Safari):
-   полупрозрачный белый/чёрный слой поверх уже нарисованного */
+/* яркость: полупрозрачный белый/чёрный слой поверх нарисованного —
+   работает во всех браузерах (canvas-фильтры Safari объявляет, но не рисует) */
 function brightOverlay(c,w,h){
-  if(FILTER_OK || S.bright===0) return;
+  if(S.bright===0) return;
   c.save();
   c.globalCompositeOperation='source-atop';
   const b=S.bright/100;
   c.fillStyle = b>0 ? `rgba(255,255,255,${(b*0.7).toFixed(3)})` : `rgba(0,0,0,${(-b*0.7).toFixed(3)})`;
   c.fillRect(0,0,w,h);
+  c.restore();
+}
+/* мягкое «растворение» краёв кадра камеры, чтобы окошко аккуратно входило в сцену */
+let edgeMask=null, edgeKey='';
+function featherEdges(c,w,h){
+  const key=w+'x'+h;
+  if(edgeKey!==key){
+    edgeMask=document.createElement('canvas'); edgeMask.width=w; edgeMask.height=h;
+    const m=edgeMask.getContext('2d');
+    m.fillStyle='#fff'; m.fillRect(0,0,w,h);
+    const f=Math.max(6,Math.round(Math.min(w,h)*0.06));
+    m.globalCompositeOperation='destination-in';
+    const grads=[[0,0,f,0],[w,0,w-f,0],[0,0,0,f],[0,h,0,h-f]];
+    for(const [x0,y0,x1,y1] of grads){
+      const g=m.createLinearGradient(x0,y0,x1,y1);
+      g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,1)');
+      m.fillStyle=g; m.fillRect(0,0,w,h);
+    }
+    edgeKey=key;
+  }
+  c.save();
+  c.globalCompositeOperation='destination-in';
+  c.drawImage(edgeMask,0,0);
   c.restore();
 }
 function procSize(){
@@ -799,14 +865,14 @@ function updateMask(){
     v = v<0.3 ? 0 : v>0.8 ? 1 : (v-0.3)/0.5;    // чёткий край без «ореола»
     const nv=v*255, pa=prevA[i];
     const dlt=Math.abs(nv-pa);
-    if(dlt>25&&dlt<90) flick++;                 // «дрожащие» пиксели — признак мерцания
-    // резкое изменение (движение) — быстрый отклик; мелкое (мерцание волос) — сильное сглаживание
-    const a = dlt>90 ? nv*0.7+pa*0.3 : nv*0.2+pa*0.8;
+    if(dlt>25&&dlt<60) flick++;                 // «дрожащие» пиксели — признак мерцания
+    // движение — быстрый отклик (чтобы не терять руки); мелкая дрожь — сильное сглаживание
+    const a = dlt>60 ? nv*0.8+pa*0.2 : nv*0.2+pa*0.8;
     prevA[i]=a;
     d[i*4+3]=a;
   }
   flickerAvg=flickerAvg*0.95+(flick/arr.length)*0.05;
-  if(!autoBgDone && maskCount>150 && flickerAvg>0.05 && S.bg<35){
+  if(!autoBgDone && maskCount>150 && flickerAvg>0.05 && S.mode==='side' && S.bg<35){
     autoBgDone=true; S.bg=35; applyAll();
     toast('Края сильно мерцают — приложение немного проявило фон, так спокойнее для глаз. Ползунок «Фон за мной» — на ваш вкус.', 7000);
   }
@@ -826,19 +892,17 @@ function drawCut(w,h){
   c.save();
   c.clearRect(0,0,w,h);
   if(S.mirror){ c.translate(w,0); c.scale(-1,1); }
-  if(S.bright!==0&&FILTER_OK) c.filter=brightFilter();
   c.drawImage(camVideo,0,0,w,h);
-  c.filter='none';
   c.globalCompositeOperation='destination-in'; // остаётся только человек
   c.drawImage(maskCanvas,0,0,w,h);
-  if(S.bg>0){
+  if(bgCur()>0){
     c.globalCompositeOperation='destination-over';
-    c.globalAlpha=S.bg/100;
-    let f=(S.bright!==0?brightFilter():'')+(S.blur?' blur(8px)':'');
-    if(f.trim()&&FILTER_OK) c.filter=f.trim();
+    c.globalAlpha=bgCur()/100;
+    if(S.blur&&FILTER_OK) c.filter='blur(8px)';
     c.drawImage(camVideo,0,0,w,h);
   }
   c.restore();
+  featherEdges(c,w,h);
   brightOverlay(c,w,h);
 }
 
@@ -847,7 +911,6 @@ function drawPlainFrame(w,h,vignette){
   c.save();
   c.clearRect(0,0,w,h);
   if(S.mirror){ c.translate(w,0); c.scale(-1,1); }
-  if(S.bright!==0&&FILTER_OK) c.filter=brightFilter();
   c.drawImage(camVideo,0,0,w,h);
   c.restore();
   if(vignette){                                // овал с мягкими краями вместо ИИ
@@ -858,6 +921,7 @@ function drawPlainFrame(w,h,vignette){
     c.fillStyle=g; c.fillRect(0,0,w,h);
     c.restore();
   }
+  featherEdges(camCtx,w,h);
   brightOverlay(camCtx,w,h);
 }
 
@@ -971,7 +1035,7 @@ function doAutoFit(){
       newSize=Math.max(20,Math.min(250,newSize));
       const h=fitH*newSize/100;
       const topNeeded=(feetT-A.top)-me.maxY*h;
-      S.size=newSize;
+      S.size=newSize; S.sideX=0;
       S.sideY=Math.max(-45,Math.min(45, Math.round((topNeeded-(paneH-h)/2)/paneH*100)));
     }else{
       const camR=camCanvas.getBoundingClientRect();
@@ -995,13 +1059,30 @@ function doAutoFit(){
 }
 
 /* пересчёт при изменении окна и повороте экрана */
-let lastArena={w:0,h:0};
+let lastArena={w:0,h:0}, lastSideFit=0, lastLessonRel=0;
 window.addEventListener('resize', ()=>{
   if($('stage').classList.contains('hidden')) return;
   const A=arena.getBoundingClientRect();
-  if(lastArena.w && camPos.x!==null){          // позиция силуэта — пропорционально новому экрану
-    camPos.x*=A.width/lastArena.w;
-    camPos.y*=A.height/lastArena.h;
+  if(lastArena.w&&lastArena.h&&A.width&&A.height){
+    // сохраняем видимый «рост» людей при повороте экрана
+    if(S.mode==='side'&&lastSideFit>0){
+      const paneW=A.width*(100-S.split)/100, paneH=A.height;
+      const aspect=camCanvas.width/Math.max(1,camCanvas.height);
+      const newFit=Math.min(paneH, paneW/aspect);
+      if(newFit>0) S.size=Math.round(Math.max(20,Math.min(400,
+        S.size*(lastSideFit/lastArena.h)*(A.height/newFit))));
+    }
+    if(camPos.x!==null){                       // позиция силуэта — пропорционально
+      camPos.x*=A.width/lastArena.w;
+      camPos.y*=A.height/lastArena.h;
+    }
+    if(lastLessonRel>0){                       // тренер остаётся того же роста на экране
+      const vw=lessonVideo.videoWidth||16, vh=lessonVideo.videoHeight||9;
+      const boxW=A.width*(S.mode==='side'?S.split/100:1), boxH=A.height;
+      const contain=Math.min(boxW/vw, boxH/vh)*vh;
+      if(contain>0) S.zoom=Math.round(Math.max(30,Math.min(maxLessonZoom(),
+        lastLessonRel*A.height/contain*100)));
+    }
   }
   lastArena={w:A.width, h:A.height};
   applyAll();
