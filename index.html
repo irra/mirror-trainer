@@ -322,6 +322,16 @@ async function enterStage(type, ytId){
   primed=false; firstPlayDone=false;
   ['btnBack5','btnFwd5','btnA','btnB','btnAB'].forEach(id=>$(id).disabled=!(isFile||type==='yt'));
   document.querySelectorAll('.spd').forEach(b=>b.disabled=!(isFile||type==='yt'));
+  if(type==='file'){
+    // iPhone не рисует первый кадр видео, пока его хоть раз не запустили —
+    // мгновенный беззвучный запуск-пауза, чтобы кадр появился сразу
+    lessonVideo.muted=true;
+    const pp=lessonVideo.play();
+    if(pp) pp.then(()=>setTimeout(()=>{
+      if(!firstPlayDone){ lessonVideo.pause(); try{ lessonVideo.currentTime=0; }catch(e){} }
+      lessonVideo.muted=false; primed=true; updatePlayBtn();
+    },150)).catch(()=>{ lessonVideo.muted=false; });
+  }
   if(type==='screen') toast('Окно захвачено. Пауза и перемотка — в плеере самого курса.', 6000);
   if(type==='yt') toast('YouTube готов: масштаб — ползунком или щипком, наложение — кнопкой.', 6000);
 
@@ -398,6 +408,12 @@ function clampCam(){
   camPos.x=Math.max(-w*0.1, Math.min(A.width+w*0.1, camPos.x));
   camPos.y=Math.max(-h*0.1, Math.min(A.height+h*0.1, camPos.y));
 }
+function placeCamOverlay(){
+  // единственное место, где центр превращается в left/top — и для applyAll, и для перетаскивания
+  const {w,h}=camDispSize();
+  camCanvas.style.left=(camPos.x-w/2)+'px';
+  camCanvas.style.top=(camPos.y-h/2)+'px';
+}
 function applyAll(){
   // режимы
   const side = S.mode==='side';
@@ -446,12 +462,11 @@ function applyAll(){
     camPane.style.top='0'; camPane.style.bottom='0';
     camPane.style.overflow='visible';
     const h=A.height*S.size/100;
-    const w=h*aspect;
     camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
     // camPos — ЦЕНТР кадра: при изменении размера картинка растёт от центра и не уезжает
     if(camPos.x===null){ camPos.x=A.width/2; camPos.y=A.height/2; }
     clampCam();                                 // силуэт не может уйти за экран
-    camCanvas.style.left=(camPos.x-w/2)+'px'; camCanvas.style.top=(camPos.y-h/2)+'px';
+    placeCamOverlay();
   }
   // запоминаем видимую высоту урока — чтобы при повороте экрана сохранить «рост» тренера
   {
@@ -547,7 +562,7 @@ let pinching=false;
     camPos.x=drag.ox+(e.clientX-drag.sx);
     camPos.y=drag.oy+(e.clientY-drag.sy);
     clampCam();
-    camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
+    placeCamOverlay();
   });
   camCanvas.addEventListener('pointerup', ()=>{drag=null; camCanvas.style.cursor='grab'; save();});
   // панорама урока при изменённом масштабе
