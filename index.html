@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Зеркальный тренажёр</title>
 <style>
   :root{
@@ -43,7 +43,7 @@
 
   /* ---------- экран тренировки ---------- */
   #stage{position:fixed; inset:0;}
-  #arena{position:absolute; inset:0; background:#000; overflow:hidden;}
+  #arena{position:absolute; inset:0; background:#000; overflow:hidden; touch-action:none;}
   #lessonBox{position:absolute; top:0; bottom:0; left:0; right:0; overflow:hidden;}
   #lessonBox video, #ytBox{width:100%; height:100%;}
   #lessonVideo{object-fit:contain; transform-origin:center center;}
@@ -162,11 +162,13 @@
       <div><label>Мой размер: <b id="vSize"></b>%</label><input type="range" id="sSize" min="20" max="250" step="1"></div>
       <div><label>Яркость моего кадра: <b id="vBright"></b></label><input type="range" id="sBright" min="-50" max="50" step="1"></div>
       <div><label>Масштаб урока: <b id="vZoom"></b>%</label><input type="range" id="sZoom" min="30" max="300" step="5"></div>
+      <div><label>Разделение экрана: <b id="vSplit"></b>%</label><input type="range" id="sSplit" min="20" max="80" step="1"></div>
     </div>
 
     <div class="row">
       <button id="btnFit">&#10024; Подогнать под тренера</button>
       <button id="btnMirror">Зеркало: вкл</button>
+      <button id="btnLMirror">Урок зеркально: выкл</button>
       <button id="btnCutout">Вырезание фона: вкл</button>
       <button id="btnBlur">Размытие фона: выкл</button>
       <button id="btnVignette" disabled>Виньетка: вкл</button>
@@ -185,7 +187,8 @@ const $ = id => document.getElementById(id);
 /* ---------------- настройки (сохраняются) ---------------- */
 const DEFAULTS = {
   mode:'side', order:'meTop', topOpacity:80, bg:25, blur:false, cutout:true,
-  vignette:true, mirror:true, bright:0, size:80, zoom:100, eco:false, speed:1
+  vignette:true, mirror:true, bright:0, size:100, zoom:100, eco:false, speed:1,
+  split:50, lessonMirror:false
 };
 let S = {...DEFAULTS};
 try { Object.assign(S, JSON.parse(localStorage.getItem('mt_settings_v2')||'{}')); } catch(e){}
@@ -294,22 +297,20 @@ async function enterStage(type, ytId){
   lessonVideo.classList.toggle('hidden', type==='yt');
 
   if(type==='yt'){
-    S.mode='side';                       // наложение поверх YouTube запрещено их правилами
     await loadYT();
     if(ytPlayer) ytPlayer.destroy();
     ytPlayer=new YT.Player('ytPlayer',{videoId:ytId, playerVars:{rel:0, playsinline:1},
       events:{ onReady:()=>{ toast('YouTube готов. Нажмите большую кнопку старта.'); applySpeed(); } }});
   }
   const isFile = type==='file';
-  $('btnOverlay').disabled = type==='yt';
-  $('btnOrder').disabled   = type==='yt';
   $('btnFit').disabled     = type==='yt';
   S.zoom=Math.min(S.zoom, maxLessonZoom());
   panX=0; panY=0;
+  primed=false;
   ['btnBack5','btnFwd5','btnA','btnB','btnAB'].forEach(id=>$(id).disabled=!(isFile||type==='yt'));
   document.querySelectorAll('.spd').forEach(b=>b.disabled=!(isFile||type==='yt'));
   if(type==='screen') toast('Окно захвачено. Пауза и перемотка — в плеере самого курса.', 6000);
-  if(type==='yt') toast('Режим YouTube: режим «рядом», масштаб урока — ползунком.', 6000);
+  if(type==='yt') toast('YouTube готов: масштаб — ползунком или щипком, наложение — кнопкой.', 6000);
 
   camPos={x:null,y:null};
   const A0=arena.getBoundingClientRect();
@@ -322,6 +323,7 @@ async function enterStage(type, ytId){
 }
 let wakeLockObj=null;
 function exitStage(){
+  primed=false;
   if(wakeLockObj){ wakeLockObj.release().catch(()=>{}); wakeLockObj=null; }
   if(sourceType==='screen' && lessonVideo.srcObject)
     lessonVideo.srcObject.getTracks().forEach(t=>t.stop());
@@ -346,7 +348,8 @@ function clampPan(z){
 function applyLessonTransform(){
   const z=Math.min(S.zoom,maxLessonZoom())/100;
   clampPan(z);
-  const t=`translate(${panX}px, ${panY}px) scale(${z})`;
+  const sx=z*((S.lessonMirror&&sourceType!=='yt')?-1:1);
+  const t=`translate(${panX}px, ${panY}px) scale(${sx}, ${z})`;
   if(sourceType==='yt'){ $('ytBox').style.transform=t; lessonVideo.style.transform=''; }
   else lessonVideo.style.transform=t;
 }
@@ -364,7 +367,7 @@ function clampCam(){
 function applyAll(){
   // режимы
   const side = S.mode==='side';
-  lessonBox.style.right = side ? '50%' : '0';
+  lessonBox.style.right = side ? (100-S.split)+'%' : '0';
   // прозрачность и порядок слоёв
   if(!side && S.order==='lessonTop'){
     lessonBox.style.zIndex=20; camCanvas.style.zIndex=10;
@@ -382,15 +385,26 @@ function applyAll(){
   $('lessonShield').classList.toggle('hidden', !(sourceType==='yt' && S.zoom!==100));
   // размер и позиция силуэта
   const A=arena.getBoundingClientRect();
-  const h=A.height*S.size/100;
-  camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
-  if(camPos.x===null){
-    const w=h*(camCanvas.width/Math.max(1,camCanvas.height));
-    camPos.x = side ? A.width*0.5+(A.width*0.5-w)/2 : (A.width-w)/2;
-    camPos.y = A.height-h-10;
+  const aspect=camCanvas.width/Math.max(1,camCanvas.height);
+  if(side){
+    // режим «рядом»: камера занимает свою половину, ровно и по центру
+    const paneX=A.width*S.split/100, paneW=A.width-paneX, paneH=A.height;
+    const h=Math.max(40, Math.min(paneH, paneW/aspect)*S.size/100);
+    const w=h*aspect;
+    camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
+    camCanvas.style.left=(paneX+(paneW-w)/2)+'px';
+    camCanvas.style.top=(A.height-h)+'px';
+  }else{
+    const h=A.height*S.size/100;
+    camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
+    if(camPos.x===null){
+      const w=h*aspect;
+      camPos.x=(A.width-w)/2;
+      camPos.y=A.height-h-10;
+    }
+    clampCam();                                 // силуэт не может уйти за экран
+    camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
   }
-  clampCam();                                   // силуэт не может уйти за экран
-  camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
   // подписи кнопок
   $('btnSide').classList.toggle('active', side);
   $('btnOverlay').classList.toggle('active', !side);
@@ -408,6 +422,10 @@ function applyAll(){
   $('sSize').value=S.size; $('vSize').textContent=S.size;
   $('sBright').value=S.bright; $('vBright').textContent=(S.bright>0?'+':'')+S.bright;
   $('sZoom').value=S.zoom; $('vZoom').textContent=S.zoom;
+  $('sSplit').value=S.split; $('vSplit').textContent=S.split;
+  $('btnLMirror').textContent='Урок зеркально: '+(S.lessonMirror?'вкл':'выкл');
+  $('btnLMirror').disabled = sourceType==='yt';
+  $('sSplit').disabled = !side;
   save();
 }
 
@@ -425,9 +443,18 @@ $('sZoom').oninput = e=>{
   }
   applyAll();
 };
+$('sSplit').oninput = e=>{S.split=+e.target.value; applyAll();};
 /* кнопки-переключатели */
+let ytOverlayWarned=false;
 $('btnSide').onclick   = ()=>{S.mode='side'; camPos={x:null,y:null}; applyAll();};
-$('btnOverlay').onclick= ()=>{S.mode='overlay'; camPos={x:null,y:null}; applyAll();};
+$('btnOverlay').onclick= ()=>{
+  if(sourceType==='yt' && !ytOverlayWarned){
+    ytOverlayWarned=true;
+    toast('Наложение поверх плеера YouTube — формально против их правил встраивания. Для личных тренировок — на ваше усмотрение.', 8000);
+  }
+  S.mode='overlay'; camPos={x:null,y:null}; applyAll();
+};
+$('btnLMirror').onclick= ()=>{S.lessonMirror=!S.lessonMirror; applyAll();};
 $('btnOrder').onclick  = ()=>{S.order=S.order==='meTop'?'lessonTop':'meTop'; applyAll();};
 $('btnMirror').onclick = ()=>{S.mirror=!S.mirror; applyAll();};
 $('btnCutout').onclick = ()=>{S.cutout=!S.cutout; applyAll();};
@@ -435,23 +462,26 @@ $('btnBlur').onclick   = ()=>{S.blur=!S.blur; applyAll();};
 $('btnVignette').onclick=()=>{S.vignette=!S.vignette; applyAll();};
 $('btnEco').onclick    = ()=>{S.eco=!S.eco; applyAll();};
 
-/* ================= ПЕРЕТАСКИВАНИЕ ================= */
+/* ================= ЖЕСТЫ: перетаскивание, щипок, тапы ================= */
+let pinching=false;
 (function(){
   let drag=null;
   camCanvas.addEventListener('pointerdown', e=>{
+    if(S.mode==='side') return;                 // в режиме «рядом» позицией управляет ползунок разделения
     drag={sx:e.clientX, sy:e.clientY, ox:camPos.x, oy:camPos.y};
     camCanvas.setPointerCapture(e.pointerId);
     camCanvas.style.cursor='grabbing';
   });
   camCanvas.addEventListener('pointermove', e=>{
     if(!drag) return;
+    if(pinching){ drag=null; return; }
     camPos.x=drag.ox+(e.clientX-drag.sx);
     camPos.y=drag.oy+(e.clientY-drag.sy);
     clampCam();
     camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
   });
   camCanvas.addEventListener('pointerup', ()=>{drag=null; camCanvas.style.cursor='grab'; save();});
-  // панорама урока при увеличении
+  // панорама урока при изменённом масштабе
   let pan=null;
   lessonBox.addEventListener('pointerdown', e=>{
     if(S.zoom===100) return;
@@ -460,11 +490,68 @@ $('btnEco').onclick    = ()=>{S.eco=!S.eco; applyAll();};
   });
   lessonBox.addEventListener('pointermove', e=>{
     if(!pan) return;
+    if(pinching){ pan=null; return; }
     panX=pan.ox+(e.clientX-pan.sx); panY=pan.oy+(e.clientY-pan.sy);
     applyLessonTransform();
   });
   lessonBox.addEventListener('pointerup', ()=>{pan=null;});
 })();
+
+/* щипок двумя пальцами: на силуэте — мой размер, на уроке — масштаб урока;
+   одинарный тап — показать/скрыть меню; двойной тап — старт/пауза */
+(function(){
+  const pts=new Map();
+  let pinch=null, tapCancelled=false, lastTap=0, singleTimer=null, downPos=null, downT=0;
+  arena.addEventListener('pointerdown', e=>{
+    pts.set(e.pointerId,{x:e.clientX, y:e.clientY, target:e.target});
+    if(pts.size===1){ downPos={x:e.clientX,y:e.clientY}; downT=Date.now(); tapCancelled=false; }
+    if(pts.size===2){
+      tapCancelled=true;
+      const [a,b]=[...pts.values()];
+      const onCam=(a.target===camCanvas)||(b.target===camCanvas);
+      pinch={d0:Math.max(20,Math.hypot(a.x-b.x,a.y-b.y)), size0:S.size, zoom0:S.zoom, cam:onCam};
+      pinching=true;
+    }
+  }, true);
+  arena.addEventListener('pointermove', e=>{
+    const p=pts.get(e.pointerId); if(!p) return;
+    p.x=e.clientX; p.y=e.clientY;
+    if(pinch && pts.size===2){
+      const [a,b]=[...pts.values()];
+      const k=Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0;
+      if(pinch.cam) S.size=Math.round(Math.max(20,Math.min(250,pinch.size0*k)));
+      else S.zoom=Math.round(Math.max(30,Math.min(maxLessonZoom(),pinch.zoom0*k)));
+      applyAll();
+    }
+  }, true);
+  function up(e){
+    pts.delete(e.pointerId);
+    if(pts.size<2){ pinch=null; pinching=false; }
+    if(pts.size===0 && downPos && !tapCancelled){
+      const moved=Math.hypot(e.clientX-downPos.x, e.clientY-downPos.y)>12;
+      const dur=Date.now()-downT;
+      downPos=null;
+      if(moved || dur>350) return;
+      const now=Date.now();
+      if(now-lastTap<350){                       // двойной тап — старт/пауза
+        lastTap=0; clearTimeout(singleTimer);
+        primePlayback(); togglePlay(false);
+      }else{
+        lastTap=now;
+        singleTimer=setTimeout(()=>{             // одинарный тап — меню
+          const p=$('panel');
+          if(p.classList.contains('away')) wakePanel();
+          else { p.classList.add('away'); clearTimeout(panelTimer); }
+        },360);
+      }
+    }
+  }
+  arena.addEventListener('pointerup', up, true);
+  arena.addEventListener('pointercancel', e=>{ pts.delete(e.pointerId); if(pts.size<2){pinch=null; pinching=false;} downPos=null; }, true);
+})();
+/* Safari: запрет масштабирования всей страницы щипком во время тренировки */
+document.addEventListener('gesturestart', e=>{ if(!$('stage').classList.contains('hidden')) e.preventDefault(); });
+document.addEventListener('gesturechange', e=>{ if(!$('stage').classList.contains('hidden')) e.preventDefault(); });
 
 /* ================= УПРАВЛЕНИЕ УРОКОМ ================= */
 const lesson={
@@ -481,6 +568,25 @@ function applySpeed(){
   else lessonVideo.playbackRate=S.speed;
 }
 document.querySelectorAll('.spd').forEach(b=>b.onclick=()=>{S.speed=+b.dataset.r; applySpeed(); save();});
+
+/* iPhone/Safari разрешает запуск видео только в момент касания. «Прогреваем»
+   плеер беззвучно при первом нажатии — дальше отсчёт и кнопки работают. */
+let primed=false;
+function primePlayback(){
+  if(primed || !sourceType) return;
+  primed=true;
+  try{
+    if(sourceType==='yt' && ytPlayer && ytPlayer.playVideo){
+      if(ytPlayer.getPlayerState()===1) return;         // уже играет
+      ytPlayer.mute(); ytPlayer.playVideo();
+      setTimeout(()=>{ try{ ytPlayer.pauseVideo(); ytPlayer.unMute(); }catch(e){} }, 350);
+    }else if(sourceType==='file' && lessonVideo.paused){
+      lessonVideo.muted=true;
+      const p=lessonVideo.play();
+      if(p) p.then(()=>{ lessonVideo.pause(); lessonVideo.muted=false; }).catch(()=>{ lessonVideo.muted=false; });
+    }
+  }catch(e){}
+}
 
 let counting=false;
 function runCountdown(n, done){
@@ -500,7 +606,7 @@ function togglePlay(withCountdown){
   setTimeout(updatePlayBtn,150);
 }
 function updatePlayBtn(){ $('btnPlay').innerHTML = lesson.playing() ? '&#10074;&#10074;' : '&#9654;'; }
-$('btnPlay').onclick = ()=>togglePlay(true);
+$('btnPlay').onclick = ()=>{ primePlayback(); togglePlay(true); };
 $('btnBack5').onclick= ()=>lesson.seek(lesson.time()-10);
 $('btnFwd5').onclick = ()=>lesson.seek(lesson.time()+10);
 lessonVideo.addEventListener('play', updatePlayBtn);
@@ -535,7 +641,7 @@ document.addEventListener('keydown', e=>{
     case 'Digit3': S.speed=0.75; applySpeed(); break;
     case 'Digit4': S.speed=1; applySpeed(); break;
     case 'KeyM':
-      if(sourceType!=='yt'){ S.mode=S.mode==='side'?'overlay':'side'; camPos={x:null,y:null}; applyAll(); }
+      (S.mode==='side' ? $('btnOverlay') : $('btnSide')).click();
       break;
   }
   wakePanel();
@@ -548,7 +654,10 @@ function wakePanel(){
   clearTimeout(panelTimer);
   panelTimer=setTimeout(()=>$('panel').classList.add('away'), 4000);
 }
-document.addEventListener('pointermove', ()=>{ if(!$('stage').classList.contains('hidden')) wakePanel(); });
+document.addEventListener('pointermove', e=>{
+  // мышь будит панель движением; на сенсорном экране панель вызывается тапом
+  if(e.pointerType==='mouse' && !$('stage').classList.contains('hidden')) wakePanel();
+});
 
 /* ================= ВЫРЕЗАНИЕ ФОНА (MediaPipe Tasks, GPU) ================= */
 const MP_CDN='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35';
@@ -629,8 +738,10 @@ function updateMask(){
   const d=maskData.data;
   for(let i=0;i<arr.length;i++){
     let v=maskInvert?1-arr[i]:arr[i];
-    v = v<0.35 ? 0 : v>0.75 ? 1 : (v-0.35)/0.4; // чёткий край без «ореола»
-    const a=v*255*0.7+prevA[i]*0.3;             // сглаживание мерцания краёв
+    v = v<0.3 ? 0 : v>0.8 ? 1 : (v-0.3)/0.5;    // чёткий край без «ореола»
+    const nv=v*255, pa=prevA[i];
+    // резкое изменение (движение) — быстрый отклик; мелкое (мерцание волос) — сильное сглаживание
+    const a = Math.abs(nv-pa)>90 ? nv*0.7+pa*0.3 : nv*0.2+pa*0.8;
     prevA[i]=a;
     d[i*4+3]=a;
   }
