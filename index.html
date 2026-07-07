@@ -138,8 +138,8 @@
   <div id="panel">
     <div class="row">
       <button id="btnPlay" title="Старт с отсчётом / пауза">&#9654;</button>
-      <button id="btnBack5">&#8630; 5с</button>
-      <button id="btnFwd5">5с &#8631;</button>
+      <button id="btnBack5">&#8630; 10с</button>
+      <button id="btnFwd5">10с &#8631;</button>
       <button class="spd" data-r="0.25">0.25&times;</button>
       <button class="spd" data-r="0.5">0.5&times;</button>
       <button class="spd" data-r="0.75">0.75&times;</button>
@@ -159,7 +159,7 @@
       <div><label>Прозрачность верхнего слоя: <b id="vOp"></b>%</label><input type="range" id="sOp" min="10" max="100" step="1"></div>
       <div><label>Мой размер: <b id="vSize"></b>%</label><input type="range" id="sSize" min="20" max="250" step="1"></div>
       <div><label>Яркость моего кадра: <b id="vBright"></b></label><input type="range" id="sBright" min="-50" max="50" step="1"></div>
-      <div><label>Масштаб урока: <b id="vZoom"></b>%</label><input type="range" id="sZoom" min="100" max="300" step="5"></div>
+      <div><label>Масштаб урока: <b id="vZoom"></b>%</label><input type="range" id="sZoom" min="30" max="300" step="5"></div>
     </div>
 
     <div class="row">
@@ -170,7 +170,7 @@
       <button id="btnVignette" disabled>Виньетка: вкл</button>
       <button id="btnEco">Экономия: выкл</button>
     </div>
-    <div class="kbd">Клавиши: Пробел — пауза/старт &nbsp;|&nbsp; &larr; &rarr; — перемотка 5с &nbsp;|&nbsp; 1 2 3 4 — скорость &nbsp;|&nbsp; M — режим &nbsp;|&nbsp; Перетаскивайте свой силуэт мышью. Урок при увеличении тоже можно двигать.</div>
+    <div class="kbd">Клавиши: Пробел — пауза/старт &nbsp;|&nbsp; &larr; &rarr; — перемотка 10с &nbsp;|&nbsp; 1 2 3 4 — скорость &nbsp;|&nbsp; M — режим &nbsp;|&nbsp; Перетаскивайте свой силуэт мышью. Урок можно уменьшать/увеличивать ползунком «Масштаб» и двигать.</div>
   </div>
 </div>
 
@@ -301,14 +301,17 @@ async function enterStage(type, ytId){
   const isFile = type==='file';
   $('btnOverlay').disabled = type==='yt';
   $('btnOrder').disabled   = type==='yt';
-  $('sZoom').disabled      = type==='yt';
   $('btnFit').disabled     = type==='yt';
+  S.zoom=Math.min(S.zoom, maxLessonZoom());
+  panX=0; panY=0;
   ['btnBack5','btnFwd5','btnA','btnB','btnAB'].forEach(id=>$(id).disabled=!(isFile||type==='yt'));
   document.querySelectorAll('.spd').forEach(b=>b.disabled=!(isFile||type==='yt'));
   if(type==='screen') toast('Окно захвачено. Пауза и перемотка — в плеере самого курса.', 6000);
-  if(type==='yt') toast('Режим YouTube: только «рядом», без наложения и зума (правила YouTube).', 6000);
+  if(type==='yt') toast('Режим YouTube: только «рядом». Урок можно уменьшать, но не приближать (правила YouTube).', 6000);
 
   camPos={x:null,y:null};
+  const A0=arena.getBoundingClientRect();
+  lastArena={w:A0.width, h:A0.height};
   applyAll();
   startRenderLoop();
   initSegmentation();
@@ -331,6 +334,31 @@ $('btnExit').onclick = exitStage;
 
 /* ================= РАСКЛАДКА ================= */
 function lessonZoomAllowed(){ return sourceType==='file' || sourceType==='screen'; }
+function maxLessonZoom(){ return sourceType==='yt' ? 100 : 300; }  // YouTube нельзя обрезать, только уменьшать
+function clampPan(z){
+  const box=lessonBox.getBoundingClientRect();
+  const limX=box.width*Math.abs(z-1)/2, limY=box.height*Math.abs(z-1)/2;
+  panX=Math.max(-limX,Math.min(limX,panX));
+  panY=Math.max(-limY,Math.min(limY,panY));
+}
+function applyLessonTransform(){
+  const z=Math.min(S.zoom,maxLessonZoom())/100;
+  clampPan(z);
+  const t=`translate(${panX}px, ${panY}px) scale(${z})`;
+  if(sourceType==='yt'){ $('ytBox').style.transform=t; lessonVideo.style.transform=''; }
+  else lessonVideo.style.transform=t;
+}
+function camDispSize(){
+  const A=arena.getBoundingClientRect();
+  const h=A.height*S.size/100;
+  const w=h*(camCanvas.width/Math.max(1,camCanvas.height));
+  return {w,h,A};
+}
+function clampCam(){
+  const {w,h,A}=camDispSize();
+  camPos.x=Math.max(-w*0.6, Math.min(A.width-w*0.4, camPos.x));
+  camPos.y=Math.max(-h*0.6, Math.min(A.height-h*0.4, camPos.y));
+}
 function applyAll(){
   // режимы
   const side = S.mode==='side';
@@ -346,10 +374,8 @@ function applyAll(){
     camCanvas.style.opacity = side ? 1 : S.topOpacity/100;
     lessonBox.style.pointerEvents='auto';
   }
-  // зум урока
-  const z=lessonZoomAllowed()? S.zoom/100 : 1;
-  if(z===1){ panX=0; panY=0; }
-  lessonVideo.style.transform=`translate(${panX}px, ${panY}px) scale(${z})`;
+  // зум урока (меньше 100% — уменьшение в рамке, больше — приближение)
+  applyLessonTransform();
   // размер и позиция силуэта
   const A=arena.getBoundingClientRect();
   const h=A.height*S.size/100;
@@ -359,6 +385,7 @@ function applyAll(){
     camPos.x = side ? A.width*0.5+(A.width*0.5-w)/2 : (A.width-w)/2;
     camPos.y = A.height-h-10;
   }
+  clampCam();                                   // силуэт не может уйти за экран
   camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
   // подписи кнопок
   $('btnSide').classList.toggle('active', side);
@@ -385,7 +412,7 @@ $('sBg').oninput = e=>{S.bg=+e.target.value; applyAll();};
 $('sOp').oninput = e=>{S.topOpacity=+e.target.value; applyAll();};
 $('sSize').oninput = e=>{S.size=+e.target.value; applyAll();};
 $('sBright').oninput = e=>{S.bright=+e.target.value; applyAll();};
-$('sZoom').oninput = e=>{S.zoom=+e.target.value; applyAll();};
+$('sZoom').oninput = e=>{S.zoom=Math.min(+e.target.value, maxLessonZoom()); applyAll();};
 /* кнопки-переключатели */
 $('btnSide').onclick   = ()=>{S.mode='side'; camPos={x:null,y:null}; applyAll();};
 $('btnOverlay').onclick= ()=>{S.mode='overlay'; camPos={x:null,y:null}; applyAll();};
@@ -408,20 +435,21 @@ $('btnEco').onclick    = ()=>{S.eco=!S.eco; applyAll();};
     if(!drag) return;
     camPos.x=drag.ox+(e.clientX-drag.sx);
     camPos.y=drag.oy+(e.clientY-drag.sy);
+    clampCam();
     camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
   });
   camCanvas.addEventListener('pointerup', ()=>{drag=null; camCanvas.style.cursor='grab'; save();});
   // панорама урока при увеличении
   let pan=null;
   lessonBox.addEventListener('pointerdown', e=>{
-    if(!lessonZoomAllowed() || S.zoom<=100) return;
+    if(S.zoom===100) return;
     pan={sx:e.clientX, sy:e.clientY, ox:panX, oy:panY};
     lessonBox.setPointerCapture(e.pointerId);
   });
   lessonBox.addEventListener('pointermove', e=>{
     if(!pan) return;
     panX=pan.ox+(e.clientX-pan.sx); panY=pan.oy+(e.clientY-pan.sy);
-    lessonVideo.style.transform=`translate(${panX}px, ${panY}px) scale(${S.zoom/100})`;
+    applyLessonTransform();
   });
   lessonBox.addEventListener('pointerup', ()=>{pan=null;});
 })();
@@ -443,17 +471,17 @@ function applySpeed(){
 document.querySelectorAll('.spd').forEach(b=>b.onclick=()=>{S.speed=+b.dataset.r; applySpeed(); save();});
 
 let counting=false;
-function playWithCountdown(){
+function runCountdown(n, done){
   if(counting) return;
   counting=true;
-  const cd=$('countdown'); cd.classList.remove('hidden');
-  let n=3; cd.textContent=n;
+  const cd=$('countdown'); cd.classList.remove('hidden'); cd.textContent=n;
   const iv=setInterval(()=>{
     n--;
-    if(n<=0){ clearInterval(iv); cd.classList.add('hidden'); counting=false; lesson.play(); updatePlayBtn(); }
+    if(n<=0){ clearInterval(iv); cd.classList.add('hidden'); counting=false; done(); }
     else cd.textContent=n;
-  },800);
+  },900);
 }
+function playWithCountdown(){ runCountdown(3, ()=>{ lesson.play(); updatePlayBtn(); }); }
 function togglePlay(withCountdown){
   if(lesson.playing()){ lesson.pause(); }
   else { withCountdown ? playWithCountdown() : lesson.play(); }
@@ -461,8 +489,8 @@ function togglePlay(withCountdown){
 }
 function updatePlayBtn(){ $('btnPlay').innerHTML = lesson.playing() ? '&#10074;&#10074;' : '&#9654;'; }
 $('btnPlay').onclick = ()=>togglePlay(true);
-$('btnBack5').onclick= ()=>lesson.seek(lesson.time()-5);
-$('btnFwd5').onclick = ()=>lesson.seek(lesson.time()+5);
+$('btnBack5').onclick= ()=>lesson.seek(lesson.time()-10);
+$('btnFwd5').onclick = ()=>lesson.seek(lesson.time()+10);
 lessonVideo.addEventListener('play', updatePlayBtn);
 lessonVideo.addEventListener('pause', updatePlayBtn);
 
@@ -488,8 +516,8 @@ document.addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
   switch(e.code){
     case 'Space': e.preventDefault(); togglePlay(false); break;
-    case 'ArrowLeft': lesson.seek(lesson.time()-5); break;
-    case 'ArrowRight': lesson.seek(lesson.time()+5); break;
+    case 'ArrowLeft': lesson.seek(lesson.time()-10); break;
+    case 'ArrowRight': lesson.seek(lesson.time()+10); break;
     case 'Digit1': S.speed=0.25; applySpeed(); break;
     case 'Digit2': S.speed=0.5; applySpeed(); break;
     case 'Digit3': S.speed=0.75; applySpeed(); break;
@@ -709,6 +737,12 @@ $('btnFit').onclick = async ()=>{
       await ensurePose();
       poseLoading=false;
     }
+  }catch(err){ poseLoading=false; toast('Не получилось загрузить ИИ позы: '+err.message, 6000); return; }
+  toast('Отойдите и встаньте в полный рост — замер через 5 секунд', 5000);
+  runCountdown(5, doAutoFit);
+};
+function doAutoFit(){
+  try{
     toast('Ищу тренера и вас в кадре…', 10000);
     const tLm=poseDetect(lessonVideo);
     const mLm=poseDetect(camVideo);
@@ -729,15 +763,24 @@ $('btnFit').onclick = async ()=>{
     S.size=newSize; camPos.y=newTop;
     if(camPos.x===null) camPos.x=(A.width-camR.width)/2;
     applyAll();
-    toast('Готово: размер и высота подогнаны под тренера. Подвиньте себя мышью, куда удобно.', 5000);
+    toast('Готово: размер и высота подогнаны под тренера. Подвиньте себя, куда удобно.', 5000);
   }catch(err){
-    poseLoading=false;
     toast('Не получилось: '+err.message, 6000);
   }
-};
+}
 
-/* пересчёт при изменении окна */
-window.addEventListener('resize', ()=>{ if(!$('stage').classList.contains('hidden')) applyAll(); });
+/* пересчёт при изменении окна и повороте экрана */
+let lastArena={w:0,h:0};
+window.addEventListener('resize', ()=>{
+  if($('stage').classList.contains('hidden')) return;
+  const A=arena.getBoundingClientRect();
+  if(lastArena.w && camPos.x!==null){          // позиция силуэта — пропорционально новому экрану
+    camPos.x*=A.width/lastArena.w;
+    camPos.y*=A.height/lastArena.h;
+  }
+  lastArena={w:A.width, h:A.height};
+  applyAll();
+});
 </script>
 </body>
 </html>
