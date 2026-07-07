@@ -171,7 +171,7 @@
       <div><label>Фон за мной: <b id="vBg"></b>%</label><input type="range" id="sBg" min="0" max="100" step="1"></div>
       <div><label>Прозрачность верхнего слоя: <b id="vOp"></b>%</label><input type="range" id="sOp" min="10" max="100" step="1"></div>
       <div><label>Мой размер: <b id="vSize"></b>%</label><input type="range" id="sSize" min="20" max="400" step="1"></div>
-      <div><label>Яркость моего кадра: <b id="vBright"></b></label><input type="range" id="sBright" min="-50" max="50" step="1"></div>
+      <div><label>Сочность моего кадра: <b id="vBright"></b></label><input type="range" id="sBright" min="0" max="100" step="1"></div>
       <div><label>Масштаб урока: <b id="vZoom"></b>%</label><input type="range" id="sZoom" min="30" max="1000" step="5"></div>
       <div><label>Разделение экрана: <b id="vSplit"></b>%</label><input type="range" id="sSplit" min="20" max="80" step="1"></div>
     </div>
@@ -204,6 +204,7 @@ const DEFAULTS = {
 };
 let S = {...DEFAULTS};
 try { Object.assign(S, JSON.parse(localStorage.getItem('mt_settings_v2')||'{}')); } catch(e){}
+S.bright=Math.max(0,Math.min(100,S.bright||0));   // раньше была «яркость» −50..50, теперь «сочность» 0..100
 function save(){ try{ localStorage.setItem('mt_settings_v2', JSON.stringify(S)); }catch(e){} }
 
 /* ---------------- элементы ---------------- */
@@ -318,7 +319,7 @@ async function enterStage(type, ytId){
   const isFile = type==='file';
   S.zoom=Math.min(S.zoom, maxLessonZoom());
   panX=0; panY=0;
-  primed=false;
+  primed=false; firstPlayDone=false;
   ['btnBack5','btnFwd5','btnA','btnB','btnAB'].forEach(id=>$(id).disabled=!(isFile||type==='yt'));
   document.querySelectorAll('.spd').forEach(b=>b.disabled=!(isFile||type==='yt'));
   if(type==='screen') toast('Окно захвачено. Пауза и перемотка — в плеере самого курса.', 6000);
@@ -392,9 +393,10 @@ function camDispSize(){
   return {w,h,A};
 }
 function clampCam(){
+  // camPos — центр кадра; держим не меньше ~40% картинки на экране
   const {w,h,A}=camDispSize();
-  camPos.x=Math.max(-w*0.6, Math.min(A.width-w*0.4, camPos.x));
-  camPos.y=Math.max(-h*0.6, Math.min(A.height-h*0.4, camPos.y));
+  camPos.x=Math.max(-w*0.1, Math.min(A.width+w*0.1, camPos.x));
+  camPos.y=Math.max(-h*0.1, Math.min(A.height+h*0.1, camPos.y));
 }
 function applyAll(){
   // режимы
@@ -444,14 +446,12 @@ function applyAll(){
     camPane.style.top='0'; camPane.style.bottom='0';
     camPane.style.overflow='visible';
     const h=A.height*S.size/100;
+    const w=h*aspect;
     camCanvas.style.height=h+'px'; camCanvas.style.width='auto';
-    if(camPos.x===null){
-      const w=h*aspect;
-      camPos.x=(A.width-w)/2;
-      camPos.y=(A.height-h)/2;
-    }
+    // camPos — ЦЕНТР кадра: при изменении размера картинка растёт от центра и не уезжает
+    if(camPos.x===null){ camPos.x=A.width/2; camPos.y=A.height/2; }
     clampCam();                                 // силуэт не может уйти за экран
-    camCanvas.style.left=camPos.x+'px'; camCanvas.style.top=camPos.y+'px';
+    camCanvas.style.left=(camPos.x-w/2)+'px'; camCanvas.style.top=(camPos.y-h/2)+'px';
   }
   // запоминаем видимую высоту урока — чтобы при повороте экрана сохранить «рост» тренера
   {
@@ -476,7 +476,7 @@ function applyAll(){
   $('sBg').value=bgCur(); $('vBg').textContent=bgCur();
   $('sOp').value=S.topOpacity; $('vOp').textContent=S.topOpacity;
   $('sSize').value=S.size; $('vSize').textContent=S.size;
-  $('sBright').value=S.bright; $('vBright').textContent=(S.bright>0?'+':'')+S.bright;
+  $('sBright').value=S.bright; $('vBright').textContent=S.bright;
   $('sZoom').value=S.zoom; $('vZoom').textContent=S.zoom;
   $('sSplit').value=S.split; $('vSplit').textContent=S.split;
   $('btnLMirror').textContent='Урок зеркально: '+(S.lessonMirror?'вкл':'выкл');
@@ -614,7 +614,7 @@ let pinching=false;
       const now=Date.now();
       if(now-lastTap<350){                       // двойной тап — старт/пауза
         lastTap=0; clearTimeout(singleTimer);
-        primePlayback(); togglePlay(false);
+        togglePlay(false);
       }else{
         lastTap=now;
         singleTimer=setTimeout(()=>{             // одинарный тап — меню
@@ -688,13 +688,15 @@ function runCountdown(n, done){
   },900);
 }
 function playWithCountdown(){ runCountdown(3, ()=>{ lesson.play(); updatePlayBtn(); }); }
+let firstPlayDone=false;
 function togglePlay(withCountdown){
   if(lesson.playing()){ lesson.pause(); }
-  else { withCountdown ? playWithCountdown() : lesson.play(); }
+  else if(withCountdown && firstPlayDone){ primePlayback(); playWithCountdown(); }
+  else { firstPlayDone=true; lesson.play(); }   // первый запуск — сразу, без отсчёта
   setTimeout(updatePlayBtn,150);
 }
 function updatePlayBtn(){ $('btnPlay').innerHTML = lesson.playing() ? '&#10074;&#10074;' : '&#9654;'; }
-$('btnPlay').onclick = ()=>{ primePlayback(); togglePlay(true); };
+$('btnPlay').onclick = ()=>togglePlay(true);
 $('btnBack5').onclick= ()=>lesson.seek(lesson.time()-10);
 $('btnFwd5').onclick = ()=>lesson.seek(lesson.time()+10);
 lessonVideo.addEventListener('play', updatePlayBtn);
@@ -789,15 +791,14 @@ function sizeCanvasTo(w,h){
 function brightFilter(){ return `brightness(${(100+S.bright)/100})`; }
 const FILTER_OK=(()=>{ try{ const t=document.createElement('canvas').getContext('2d');
   t.filter='blur(1px)'; return t.filter!=='none'; }catch(e){ return false; } })();
-/* яркость: полупрозрачный белый/чёрный слой поверх нарисованного —
-   работает во всех браузерах (canvas-фильтры Safari объявляет, но не рисует) */
+/* «сочность»: кадр смешивается сам с собой в режиме overlay — усиливает
+   насыщенность и контраст, чтобы камера не выглядела блёкло рядом с проф-видео */
 function brightOverlay(c,w,h){
-  if(S.bright===0) return;
+  if(!S.bright) return;
   c.save();
-  c.globalCompositeOperation='source-atop';
-  const b=S.bright/100;
-  c.fillStyle = b>0 ? `rgba(255,255,255,${(b*0.7).toFixed(3)})` : `rgba(0,0,0,${(-b*0.7).toFixed(3)})`;
-  c.fillRect(0,0,w,h);
+  c.globalCompositeOperation='overlay';
+  c.globalAlpha=Math.min(1,S.bright/100);
+  c.drawImage(c.canvas,0,0,w,h);
   c.restore();
 }
 /* мягкое «растворение» краёв кадра камеры, чтобы окошко аккуратно входило в сцену */
@@ -902,8 +903,8 @@ function drawCut(w,h){
     c.drawImage(camVideo,0,0,w,h);
   }
   c.restore();
-  featherEdges(c,w,h);
   brightOverlay(c,w,h);
+  if(S.mode==='overlay') featherEdges(c,w,h);   // мягкие края — только в наложении
 }
 
 function drawPlainFrame(w,h,vignette){
@@ -921,8 +922,8 @@ function drawPlainFrame(w,h,vignette){
     c.fillStyle=g; c.fillRect(0,0,w,h);
     c.restore();
   }
-  featherEdges(camCtx,w,h);
   brightOverlay(camCtx,w,h);
+  if(S.mode==='overlay') featherEdges(camCtx,w,h);
 }
 
 function renderFrame(){
@@ -1014,11 +1015,13 @@ function doAutoFit(){
     let trainerPx, feetT;
     if(sourceType==='yt'){
       // кадры YouTube-плеера приложению «не видны» (изоляция iframe) —
-      // берём типичное кадрирование: тренер ~68% высоты кадра, ступни на ~88%
+      // считаем реальную высоту картинки 16:9 внутри окна (без чёрных полей)
+      // и берём типичное кадрирование: тренер ~68% кадра, ступни на ~88%
       const box=lessonBox.getBoundingClientRect();
       const z=Math.min(S.zoom,maxLessonZoom())/100;
-      trainerPx=box.height*0.68*z;
-      feetT=box.top+box.height*0.88;
+      const contentH=Math.min(box.width/16, box.height/9)*9*z;
+      trainerPx=contentH*0.68;
+      feetT=box.top+box.height/2+(0.88-0.5)*contentH+panY;
     }else{
       const tLm=poseDetect(lessonVideo);
       const tr=tLm&&bodySpan(tLm);
@@ -1046,8 +1049,8 @@ function doAutoFit(){
       newH=A.height*newSize/100;
       let newTop=feetT - me.maxY*newH - A.top;
       newTop=Math.max(-newH*0.5, Math.min(A.height-newH*0.3, newTop));
-      S.size=newSize; camPos.y=newTop;
-      if(camPos.x===null) camPos.x=(A.width-camR.width)/2;
+      S.size=newSize; camPos.y=newTop+newH/2;   // camPos — центр кадра
+      if(camPos.x===null) camPos.x=A.width/2;
     }
     applyAll();
     toast(sourceType==='yt'
