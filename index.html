@@ -320,7 +320,7 @@ async function enterStage(type, ytId){
   const isFile = type==='file';
   S.zoom=Math.min(S.zoom, maxLessonZoom());
   panX=0; panY=0;
-  primed=false; firstPlayDone=false;
+  primed=false; firstPlayDone=false; firstFrameTries=0;
   ['btnBack5','btnFwd5','btnA','btnB','btnAB'].forEach(id=>$(id).disabled=!(isFile||type==='yt'));
   document.querySelectorAll('.spd').forEach(b=>b.disabled=!(isFile||type==='yt'));
   if(type==='file'){
@@ -731,6 +731,18 @@ lessonVideo.addEventListener('loadeddata', ()=>{
   if(sourceType==='file' && !firstPlayDone && lessonVideo.paused){
     try{ lessonVideo.currentTime=0.05; }catch(e){}
   }
+});
+let firstFrameTries=0;
+lessonVideo.addEventListener('canplay', ()=>{
+  // iOS иногда игнорирует первую попытку — повторяем беззвучный микрозапуск до 3 раз
+  if(sourceType!=='file' || firstPlayDone || !lessonVideo.paused || firstFrameTries>=3) return;
+  firstFrameTries++;
+  lessonVideo.muted=true;
+  const p=lessonVideo.play();
+  if(p) p.then(()=>setTimeout(()=>{
+    if(!firstPlayDone) lessonVideo.pause();
+    lessonVideo.muted=false; primed=true; updatePlayBtn();
+  },150)).catch(()=>{ lessonVideo.muted=false; });
 });
 
 /* повтор фрагмента А–Б */
