@@ -786,7 +786,7 @@ const SEG_MODEL='https://storage.googleapis.com/mediapipe-models/image_segmenter
 const POSE_MODEL='https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
 let mpLib=null, fileset=null, segmenter=null, segFailed=false, segLoading=false;
 let frameN=0, maskReady=false, maskCount=0, maskInvert=false, segTimeAvg=0, autoEcoDone=false;
-let flickerAvg=0, autoBgDone=false;
+let flickerAvg=0, autoBgDone=false, motionAvg=0;
 const segIn=document.createElement('canvas'), segInCtx=segIn.getContext('2d');
 const maskCanvas=document.createElement('canvas'), maskCtx=maskCanvas.getContext('2d');
 let maskData=null, prevA=null;
@@ -828,7 +828,7 @@ function brightOverlay(c,w,h){
   if(!S.bright) return;
   c.save();
   c.globalCompositeOperation='soft-light';      // мягче, чем overlay: цвета глубже без «пережарки»
-  c.globalAlpha=Math.min(1,S.bright/100);
+  c.globalAlpha=S.bright/100*0.45;              // 100% = умеренный эффект, «в апельсин» не уходит
   c.drawImage(c.canvas,0,0,w,h);
   c.restore();
 }
@@ -891,18 +891,22 @@ function updateMask(){
       if(dc>dz+0.1) maskInvert=true; else if(dz>dc+0.1) maskInvert=false; }
   }
   const d=maskData.data;
-  let flick=0;
+  let flick=0, moved=0;
+  // пока человек двигается — сглаживание почти выключено (иначе шлейф за рукой),
+  // стоит спокойно — включается сильное (гасит мерцание волос)
+  const slowK = motionAvg>0.015 ? 0.75 : 0.2;
   for(let i=0;i<arr.length;i++){
     let v=maskInvert?1-arr[i]:arr[i];
     v = v<0.3 ? 0 : v>0.8 ? 1 : (v-0.3)/0.5;    // чёткий край без «ореола»
     const nv=v*255, pa=prevA[i];
     const dlt=Math.abs(nv-pa);
-    if(dlt>25&&dlt<60) flick++;                 // «дрожащие» пиксели — признак мерцания
-    // движение — быстрый отклик (чтобы не терять руки); мелкая дрожь — сильное сглаживание
-    const a = dlt>60 ? nv*0.8+pa*0.2 : nv*0.2+pa*0.8;
+    if(dlt>60) moved++;
+    else if(dlt>25) flick++;                    // «дрожащие» пиксели — признак мерцания
+    const a = dlt>60 ? nv*0.9+pa*0.1 : nv*slowK+pa*(1-slowK);
     prevA[i]=a;
     d[i*4+3]=a;
   }
+  motionAvg=motionAvg*0.5+(moved/arr.length)*0.5;
   flickerAvg=flickerAvg*0.95+(flick/arr.length)*0.05;
   if(!autoBgDone && maskCount>150 && flickerAvg>0.05 && S.mode==='side' && S.bg<35){
     autoBgDone=true; S.bg=35; applyAll();
@@ -1193,6 +1197,9 @@ window.addEventListener('resize', ()=>{
   if($('stage').classList.contains('hidden')) return;
   const A=arena.getBoundingClientRect();
   if(lastArena.w&&lastArena.h&&A.width&&A.height){
+    // после поворота экрана камера всегда показывает вас в полный рост
+    const wasLandscape=lastArena.w>lastArena.h, isLandscape=A.width>A.height;
+    if(wasLandscape!==isLandscape){ S.size=Math.min(S.size,100); S.sideY=0; }
     if(camPos.x!==null){                       // позиция силуэта — пропорционально
       camPos.x*=A.width/lastArena.w;
       camPos.y*=A.height/lastArena.h;
