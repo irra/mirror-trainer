@@ -726,6 +726,12 @@ $('btnBack5').onclick= ()=>lesson.seek(lesson.time()-10);
 $('btnFwd5').onclick = ()=>lesson.seek(lesson.time()+10);
 lessonVideo.addEventListener('play', updatePlayBtn);
 lessonVideo.addEventListener('pause', updatePlayBtn);
+lessonVideo.addEventListener('loadeddata', ()=>{
+  // подстраховка: если первый кадр не отрисовался — лёгкий сдвиг заставляет его появиться
+  if(sourceType==='file' && !firstPlayDone && lessonVideo.paused){
+    try{ lessonVideo.currentTime=0.05; }catch(e){}
+  }
+});
 
 /* повтор фрагмента А–Б */
 function updateABLabels(){
@@ -821,7 +827,7 @@ const FILTER_OK=(()=>{ try{ const t=document.createElement('canvas').getContext(
 function brightOverlay(c,w,h){
   if(!S.bright) return;
   c.save();
-  c.globalCompositeOperation='overlay';
+  c.globalCompositeOperation='soft-light';      // мягче, чем overlay: цвета глубже без «пережарки»
   c.globalAlpha=Math.min(1,S.bright/100);
   c.drawImage(c.canvas,0,0,w,h);
   c.restore();
@@ -966,18 +972,45 @@ function renderFrame(){
     drawPlainFrame(p.w,p.h,S.vignette);
   }
 }
-let lastFrameT=-1;
+let lastFrameT=-1, lastFrameChange=0, camRestarting=false;
+async function recoverCamera(){
+  toast('Камера замерла — перезапускаю…', 4000);
+  try{
+    await camVideo.play().catch(()=>{});
+    if(camVideo.currentTime===lastFrameT){       // мягкий запуск не помог — переоткрываем камеру
+      await startCamera($('camSelect').value||undefined);
+    }
+  }catch(e){ toast('Не удалось перезапустить камеру: '+e.message+'. Попробуйте «Выход» и зайти заново.', 7000); }
+  lastFrameChange=performance.now();
+  camRestarting=false;
+}
 function startRenderLoop(){
+  lastFrameChange=performance.now();
   function loop(){
     if($('stage').classList.contains('hidden')) return;   // ушли со сцены — цикл остановится
     requestAnimationFrame(loop);
     // рисуем только когда камера дала новый кадр — без лишней работы впустую
-    if(camVideo.currentTime===lastFrameT) return;
+    if(camVideo.currentTime===lastFrameT){
+      // сторож: камера не даёт кадров дольше 3 секунд — пробуем оживить
+      if(camVideo.readyState>=2 && !camRestarting && document.visibilityState==='visible'
+         && performance.now()-lastFrameChange>3000){
+        camRestarting=true; recoverCamera();
+      }
+      return;
+    }
     lastFrameT=camVideo.currentTime;
+    lastFrameChange=performance.now();
     renderFrame();
   }
   requestAnimationFrame(loop);
 }
+document.addEventListener('visibilitychange', ()=>{
+  // после сворачивания iPhone часто «усыпляет» камеру — будим
+  if(document.visibilityState==='visible'){
+    camVideo.play().catch(()=>{});
+    lastFrameChange=performance.now();
+  }
+});
 
 /* ============ ВЫСОКОЕ КАЧЕСТВО: Robust Video Matting (TensorFlow.js) ============ */
 let rvm=null, rvmLoading=false, rvmFailed=false, rvmBusy=false, rvmStates=null;
@@ -1006,11 +1039,12 @@ async function updateMaskRVM(){
   const t0=performance.now();
   try{
     const vw=camVideo.videoWidth, vh=camVideo.videoHeight;
-    const iw=512, ih=Math.max(32,Math.round(512*vh/vw));
+    const sc=512/Math.max(vw,vh);               // длинная сторона 512 — и вертикальная камера в порядке
+    const iw=Math.max(32,Math.round(vw*sc)), ih=Math.max(32,Math.round(vh*sc));
     if(rvmIn.width!==iw||rvmIn.height!==ih){ rvmIn.width=iw; rvmIn.height=ih; }
     rvmInCtx.drawImage(camVideo,0,0,iw,ih);
     const src=tf.tidy(()=>tf.browser.fromPixels(rvmIn).expandDims(0).div(255));
-    const dr=tf.tensor(0.5);
+    const dr=tf.tensor(1.0);                    // полное внутреннее разрешение — максимум качества
     const out=await rvm.executeAsync(
       {src:src, r1i:rvmStates[0], r2i:rvmStates[1], r3i:rvmStates[2], r4i:rvmStates[3], downsample_ratio:dr},
       ['pha','r1o','r2o','r3o','r4o']);
@@ -1024,7 +1058,11 @@ async function updateMaskRVM(){
       maskData=maskCtx.createImageData(pw,ph);
     }
     const d=maskData.data;
-    for(let i=0;i<data.length;i++) d[i*4+3]=data[i]*255;
+    for(let i=0;i<data.length;i++){
+      let v=data[i];                            // тело — плотное, полупрозрачными остаются только волосы/края
+      v = v<0.05 ? 0 : v>0.7 ? 1 : (v-0.05)/0.65;
+      d[i*4+3]=v*255;
+    }
     maskCtx.putImageData(maskData,0,0);
     maskReady=true;
     src.dispose(); dr.dispose(); pha.dispose();
