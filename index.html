@@ -185,6 +185,7 @@
       <button id="btnBlur">Размытие фона: выкл</button>
       <button id="btnVignette" disabled>Виньетка: вкл</button>
       <button id="btnEco">Экономия: выкл</button>
+      <button id="btnHQ" title="Тяжёлая ИИ-модель: волосы и быстрые движения лучше, нужен мощный телефон/компьютер">ИИ-фон: стандарт</button>
     </div>
     <div class="kbd">Клавиши: Пробел — пауза/старт &nbsp;|&nbsp; &larr; &rarr; — перемотка 10с &nbsp;|&nbsp; 1 2 3 4 — скорость &nbsp;|&nbsp; M — режим &nbsp;|&nbsp; Перетаскивайте свой силуэт мышью. Урок можно уменьшать/увеличивать ползунком «Масштаб» и двигать.</div>
   </div>
@@ -200,7 +201,7 @@ const $ = id => document.getElementById(id);
 const DEFAULTS = {
   mode:'side', order:'meTop', topOpacity:80, bg:25, blur:false, cutout:true,
   vignette:true, mirror:true, bright:0, size:100, zoom:100, eco:false, speed:1,
-  split:50, lessonMirror:false, sideY:0, sideX:0, bgOver:8
+  split:50, lessonMirror:false, sideY:0, sideX:0, bgOver:8, hq:false
 };
 let S = {...DEFAULTS};
 try { Object.assign(S, JSON.parse(localStorage.getItem('mt_settings_v2')||'{}')); } catch(e){}
@@ -341,6 +342,7 @@ async function enterStage(type, ytId){
   applyAll();
   startRenderLoop();
   initSegmentation();
+  if(S.hq) initRVM();
   wakePanel();
   if(navigator.wakeLock) navigator.wakeLock.request('screen').then(w=>{wakeLockObj=w;}).catch(()=>{});
 }
@@ -490,6 +492,9 @@ function applyAll(){
   $('btnVignette').textContent='Виньетка: '+(S.vignette?'вкл':'выкл');
   $('btnVignette').disabled=S.cutout;
   $('btnEco').textContent='Экономия: '+(S.eco?'вкл':'выкл');
+  $('btnHQ').textContent='ИИ-фон: '+(S.hq?'высокое':'стандарт');
+  $('btnHQ').classList.toggle('active', S.hq);
+  $('btnHQ').disabled=!S.cutout;
   $('btnBlur').disabled=!S.cutout;
   // ползунки
   $('sBg').value=bgCur(); $('vBg').textContent=bgCur();
@@ -541,6 +546,7 @@ $('btnCutout').onclick = ()=>{S.cutout=!S.cutout; applyAll();};
 $('btnBlur').onclick   = ()=>{S.blur=!S.blur; applyAll();};
 $('btnVignette').onclick=()=>{S.vignette=!S.vignette; applyAll();};
 $('btnEco').onclick    = ()=>{S.eco=!S.eco; applyAll();};
+$('btnHQ').onclick     = ()=>{S.hq=!S.hq; if(S.hq) initRVM(); applyAll();};
 
 /* ================= ЖЕСТЫ: перетаскивание, щипок, тапы ================= */
 let pinching=false;
@@ -854,7 +860,7 @@ function procSize(){
 function updateMask(){
   const vw=camVideo.videoWidth, vh=camVideo.videoHeight;
   const iw=256, ih=Math.max(64,Math.round(256*vh/vw));
-  if(segIn.width!==iw||segIn.height!==ih){
+  if(segIn.width!==iw||segIn.height!==ih||maskCanvas.width!==iw||maskCanvas.height!==ih){
     segIn.width=iw; segIn.height=ih;
     maskCanvas.width=iw; maskCanvas.height=ih;
     maskData=maskCtx.createImageData(iw,ih);
@@ -950,9 +956,10 @@ function renderFrame(){
   frameN++;
   const p=procSize();
   sizeCanvasTo(p.w,p.h);
-  if(S.cutout && segmenter && !segFailed){
+  const useRVM = S.hq && rvm && !rvmFailed;
+  if(S.cutout && (useRVM || (segmenter && !segFailed))){
     const every = S.eco ? 2 : 1;                          // экономия: маска через кадр
-    if(frameN%every===0) updateMask();
+    if(frameN%every===0){ if(useRVM) updateMaskRVM(); else updateMask(); }
     if(maskReady) drawCut(p.w,p.h);                       // картинка плавная всегда,
     else drawPlainFrame(p.w,p.h,false);                   // маска — со своей скоростью
   }else{
@@ -970,6 +977,69 @@ function startRenderLoop(){
     renderFrame();
   }
   requestAnimationFrame(loop);
+}
+
+/* ============ ВЫСОКОЕ КАЧЕСТВО: Robust Video Matting (TensorFlow.js) ============ */
+let rvm=null, rvmLoading=false, rvmFailed=false, rvmBusy=false, rvmStates=null;
+let rvmTimeAvg=0, rvmCount=0, rvmWarned=false;
+const rvmIn=document.createElement('canvas'), rvmInCtx=rvmIn.getContext('2d');
+async function initRVM(){
+  if(rvm||rvmFailed||rvmLoading) return;
+  rvmLoading=true;
+  toast('Загружаю ИИ высокого качества (~4 МБ, до 30 секунд)…', 20000);
+  try{
+    if(!window.tf) await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+    await tf.setBackend('webgl');
+    await tf.ready();
+    rvm=await tf.loadGraphModel('rvm/model.json');
+    rvmStates=[tf.tensor(0.), tf.tensor(0.), tf.tensor(0.), tf.tensor(0.)];
+    toast('Высокое качество включено', 2500);
+  }catch(err){
+    rvmFailed=true; S.hq=false; applyAll();
+    toast('Не удалось включить высокое качество ('+err.message+') — остаёмся на стандартном.', 7000);
+  }
+  rvmLoading=false;
+}
+async function updateMaskRVM(){
+  if(rvmBusy||!rvm) return;
+  rvmBusy=true;
+  const t0=performance.now();
+  try{
+    const vw=camVideo.videoWidth, vh=camVideo.videoHeight;
+    const iw=512, ih=Math.max(32,Math.round(512*vh/vw));
+    if(rvmIn.width!==iw||rvmIn.height!==ih){ rvmIn.width=iw; rvmIn.height=ih; }
+    rvmInCtx.drawImage(camVideo,0,0,iw,ih);
+    const src=tf.tidy(()=>tf.browser.fromPixels(rvmIn).expandDims(0).div(255));
+    const dr=tf.tensor(0.5);
+    const out=await rvm.executeAsync(
+      {src:src, r1i:rvmStates[0], r2i:rvmStates[1], r3i:rvmStates[2], r4i:rvmStates[3], downsample_ratio:dr},
+      ['pha','r1o','r2o','r3o','r4o']);
+    const pha=out[0];
+    rvmStates.forEach(t=>t.dispose());
+    rvmStates=[out[1],out[2],out[3],out[4]];
+    const data=await pha.data();               // альфа 0..1 на каждый пиксель
+    const ph=pha.shape[1], pw=pha.shape[2];
+    if(maskCanvas.width!==pw||maskCanvas.height!==ph){
+      maskCanvas.width=pw; maskCanvas.height=ph;
+      maskData=maskCtx.createImageData(pw,ph);
+    }
+    const d=maskData.data;
+    for(let i=0;i<data.length;i++) d[i*4+3]=data[i]*255;
+    maskCtx.putImageData(maskData,0,0);
+    maskReady=true;
+    src.dispose(); dr.dispose(); pha.dispose();
+    const dt=performance.now()-t0;
+    rvmCount++;
+    if(rvmCount>15) rvmTimeAvg=rvmTimeAvg?rvmTimeAvg*0.9+dt*0.1:dt;
+    if(!rvmWarned && rvmCount>90 && rvmTimeAvg>85){
+      rvmWarned=true;
+      toast('Устройству тяжело в высоком качестве — если картинка дёргается, верните «ИИ-фон: стандарт».', 7000);
+    }
+  }catch(err){
+    rvmFailed=true; S.hq=false; applyAll();
+    toast('Высокое качество дало сбой — вернулись на стандартное вырезание.', 6000);
+  }
+  rvmBusy=false;
 }
 
 /* ================= ПОДОГНАТЬ ПОД ТРЕНЕРА ================= */

@@ -19,7 +19,8 @@ Write-Host "  To stop the app - just close this window."
 Write-Host ""
 Start-Process "http://localhost:$port/"
 $mime = @{ ".html"="text/html; charset=utf-8"; ".js"="text/javascript"; ".css"="text/css";
-           ".png"="image/png"; ".jpg"="image/jpeg"; ".svg"="image/svg+xml"; ".mp4"="video/mp4" }
+           ".png"="image/png"; ".jpg"="image/jpeg"; ".svg"="image/svg+xml"; ".mp4"="video/mp4";
+           ".json"="application/json"; ".bin"="application/octet-stream" }
 while ($listener.IsListening) {
   try {
     $ctx = $listener.GetContext()
