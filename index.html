@@ -48,6 +48,7 @@
   #lessonBox video, #ytBox{width:100%; height:100%;}
   #lessonVideo{object-fit:contain; transform-origin:center center;}
   #ytBox iframe{width:100%; height:100%;}
+  #lessonShield{position:absolute; inset:0; z-index:5; cursor:grab;}
   #camCanvas{position:absolute; touch-action:none; cursor:grab;}
   #countdown{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     font-size:180px; font-weight:700; color:var(--accent); background:rgba(0,0,0,.45); z-index:60;}
@@ -129,6 +130,7 @@
     <div id="lessonBox">
       <video id="lessonVideo" playsinline></video>
       <div id="ytBox" class="hidden"><div id="ytPlayer"></div></div>
+      <div id="lessonShield" class="hidden"></div>
     </div>
     <canvas id="camCanvas"></canvas>
     <div id="countdown" class="hidden"></div>
@@ -307,7 +309,7 @@ async function enterStage(type, ytId){
   ['btnBack5','btnFwd5','btnA','btnB','btnAB'].forEach(id=>$(id).disabled=!(isFile||type==='yt'));
   document.querySelectorAll('.spd').forEach(b=>b.disabled=!(isFile||type==='yt'));
   if(type==='screen') toast('Окно захвачено. Пауза и перемотка — в плеере самого курса.', 6000);
-  if(type==='yt') toast('Режим YouTube: только «рядом». Урок можно уменьшать, но не приближать (правила YouTube).', 6000);
+  if(type==='yt') toast('Режим YouTube: режим «рядом», масштаб урока — ползунком.', 6000);
 
   camPos={x:null,y:null};
   const A0=arena.getBoundingClientRect();
@@ -334,7 +336,7 @@ $('btnExit').onclick = exitStage;
 
 /* ================= РАСКЛАДКА ================= */
 function lessonZoomAllowed(){ return sourceType==='file' || sourceType==='screen'; }
-function maxLessonZoom(){ return sourceType==='yt' ? 100 : 300; }  // YouTube нельзя обрезать, только уменьшать
+function maxLessonZoom(){ return 300; }
 function clampPan(z){
   const box=lessonBox.getBoundingClientRect();
   const limX=box.width*Math.abs(z-1)/2, limY=box.height*Math.abs(z-1)/2;
@@ -376,6 +378,8 @@ function applyAll(){
   }
   // зум урока (меньше 100% — уменьшение в рамке, больше — приближение)
   applyLessonTransform();
+  // прозрачный «щит» поверх YouTube-плеера, чтобы увеличенный урок можно было двигать пальцем
+  $('lessonShield').classList.toggle('hidden', !(sourceType==='yt' && S.zoom!==100));
   // размер и позиция силуэта
   const A=arena.getBoundingClientRect();
   const h=A.height*S.size/100;
@@ -412,7 +416,15 @@ $('sBg').oninput = e=>{S.bg=+e.target.value; applyAll();};
 $('sOp').oninput = e=>{S.topOpacity=+e.target.value; applyAll();};
 $('sSize').oninput = e=>{S.size=+e.target.value; applyAll();};
 $('sBright').oninput = e=>{S.bright=+e.target.value; applyAll();};
-$('sZoom').oninput = e=>{S.zoom=Math.min(+e.target.value, maxLessonZoom()); applyAll();};
+let ytZoomWarned=false;
+$('sZoom').oninput = e=>{
+  S.zoom=Math.min(+e.target.value, maxLessonZoom());
+  if(sourceType==='yt' && S.zoom>100 && !ytZoomWarned){
+    ytZoomWarned=true;
+    toast('Приближение скрывает часть плеера YouTube — формально это против их правил встраивания. Для личных тренировок — на ваше усмотрение.', 8000);
+  }
+  applyAll();
+};
 /* кнопки-переключатели */
 $('btnSide').onclick   = ()=>{S.mode='side'; camPos={x:null,y:null}; applyAll();};
 $('btnOverlay').onclick= ()=>{S.mode='overlay'; camPos={x:null,y:null}; applyAll();};
